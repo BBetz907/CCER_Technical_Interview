@@ -289,7 +289,7 @@ plot_xy <- function(df) {
   #plot
   ggplot(df, aes(x=academicyear, y=percentage, color=focus)) +
   #point and line geometries
-  geom_point(size=4) +
+  geom_point(size=3) +
   geom_line(size=1.5) +
   #custom theme
   glitr::si_style_ygrid() +
@@ -301,7 +301,7 @@ plot_xy <- function(df) {
   theme(legend.position = "none", #hide legend since it is encoded in title
         axis.title.y= element_blank(), #hide y axis title
         axis.title.x = element_text(vjust = -1), #move x axis title downards
-        strip.text = element_markdown(size=13), #increase size of header text
+        strip.text = element_markdown(size=10.5), #increase size of header text
         plot.title = element_markdown(margin = margin(b = 10)), 
           #allow encoding of color, add space beneath
         plot.subtitle = element_markdown(margin = margin(b=10)),
@@ -314,7 +314,7 @@ plot_xy <- function(df) {
                      breaks = c(0,0.25,0.5,0.75,1),
                      limits= c(-0.05, 1.05)) + 
   #establish x axis labels
-  scale_x_continuous(breaks = c(2015, 2017, 2019, 2021)
+  scale_x_continuous(breaks = c(2015, 2018, 2021)
     # breaks = unique(results_schools$academicyear)
     )
 }
@@ -335,18 +335,21 @@ results_schools %>%
         #early learning schools (pre-elementary) and coding
         #schools with multiple grade flags as "alternative"
         ## set values as factors to facillitate sort
-        grade = factor(case_when(school_type == "Early Learning" ~ 
-                                    str_to_lower(school_type),
-                         grade_flags > 1 ~ "alternative config.",
-                         .default = case_when(
-                           high_school_flag == 1 ~ "high school",
-                           middle_school_flag == 1 ~ "middle school",
-                           elementary_school_flag == 1 ~ "elementary school"
-                         )),
+        grade = factor(
+                  str_remove(
+                    case_when(school_type %in% 
+                               c("Early Learning", "Special Education School") ~ 
+                                str_to_lower(school_type),
+                              grade_flags > 1 ~ "alternative config.",
+                              .default = case_when(
+                                high_school_flag == 1 ~ "high school",
+                                middle_school_flag == 1 ~ "middle school",
+                                elementary_school_flag == 1 ~ "elementary school"
+                         )), 
+                    " school"), #remove "school" from name
                         #set factor levels to facillitate sort
-                        levels = c("early learning", "elementary school", 
-                                   "middle school",
-                                   "high school", "alternative config.")),
+                        levels = c("early learning", "elementary", "middle","high",
+                                   "special education", "alternative config.")),
          ) %>% 
   
   filter(!is.na(school_type), #exclude NA (districts)
@@ -366,7 +369,7 @@ results_schools %>%
   facet_wrap(~grade, nrow = 1) +
 
   #set label values
-  labs(title = "Higher percentage of <span style='color:#1e87a5;'>students</span>who are people of color, compared to <span style='color:#83dbfb;'>educators</span> across school types/levels",
+  labs(title = "Higher percentage of <span style='color:#1e87a5;'>students</span> who are people of color, compared to <span style='color:#83dbfb;'>educators</span> across school types/levels",
        # subtitle = "Is there one group that stands out?",
        x = "academic year", 
        caption ="alternative configurations include \"K-12\" or \"middle + high school\" among others")
@@ -564,7 +567,6 @@ results_schools %>%
     # breaks = unique(results_schools$academicyear)
     ) 
 
-# nothing particularly interesting
 
 
 ```
