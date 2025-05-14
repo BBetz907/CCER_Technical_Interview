@@ -12,7 +12,7 @@ editor: visual
 
 -   Have schools across the Road Map Region increased representation of educators of color during the time period? What types of schools have done so more or less?
 
--   What schools have the highest/lowest representation of people of color among educators? Which schools have the most equal representation of people of color between educators and students?
+-   What schools have the highest/lowest representation of people of color among educators? Which schools have the most equal representation?
 
 <!-- ## Load Packages -->
 
@@ -229,11 +229,11 @@ during the `r year_recent` academic year across the Road Map Region
 
 <br>
 
-###### **`r percentage_teacher_poc`** of teachers
+### **`r percentage_teacher_poc`** of teachers
 
 ## Trends show small improvements
 
-Proportional improvement among educators, but a wide gap remains
+But a wide gap remains
 
 ```{r}
 results_total %>% 
@@ -301,9 +301,13 @@ plot_xy <- function(df) {
   theme(legend.position = "none", #hide legend since it is encoded in title
         axis.title.y= element_blank(), #hide y axis title
         axis.title.x = element_text(vjust = -1), #move x axis title downards
-        strip.text = element_markdown(size=14), #increase size of header text
-        plot.title = element_markdown(), #allow encoding of color
-        plot.subtitle = element_markdown(), #allow encoding of color
+        strip.text = element_markdown(size=13), #increase size of header text
+        plot.title = element_markdown(margin = margin(b = 10)), 
+          #allow encoding of color, add space beneath
+        plot.subtitle = element_markdown(margin = margin(b=10)),
+          #allow encoding of color, add space beneath
+        plot.caption = element_text(hjust=2, #move caption downwards, create space
+                                    margin = margin(t = 10, b = 0) ),
         ) +
   #establish 100% scale on y axis
   scale_y_continuous(labels = scales::percent_format(),
@@ -319,6 +323,7 @@ plot_xy <- function(df) {
 ## Comparison by school type & grade
 
 ```{r}
+
 results_schools %>% 
   #munge
   mutate(
@@ -359,13 +364,12 @@ results_schools %>%
   #create facets with grade field
   #put all on the same line
   facet_wrap(~grade, nrow = 1) +
-  theme(
-    plot.caption = element_text(hjust=2, #move caption downwards, create space
-                                    margin = margin(t = 10, b = 0) )) + 
+
   #set label values
-  labs(title = "Across the region and school type, there is a higher percentage of <span style='color:#1e87a5;'>students</span><br>who are people of color, compared to <span style='color:#83dbfb;'>educators</span>",
-       subtitle = "Is there one group that stands out?",
-       x = "academic year", caption ="alternative configurations include \"K-12\" or \"middle + high school\" among others")
+  labs(title = "Higher percentage of <span style='color:#1e87a5;'>students</span>who are people of color, compared to <span style='color:#83dbfb;'>educators</span> across school types/levels",
+       # subtitle = "Is there one group that stands out?",
+       x = "academic year", 
+       caption ="alternative configurations include \"K-12\" or \"middle + high school\" among others")
 ```
 
 ## School district comparison
@@ -394,7 +398,7 @@ results_total %>%
   #create facets for district, spread across 2 rows
   facet_wrap(~district, nrow=2) +
   #establish labels
-  labs(title = "Across each district, there is a higher percentage of <span style='color:#1e87a5;'>students</span><br>who are people of color, compared to <span style='color:#83dbfb;'>educators</span>",
+  labs(title = "Percentage of <span style='color:#1e87a5;'>students</span> who are people of color compared to <span style='color:#83dbfb;'>educators</span>",
        subtitle = "Progress in Federal Way, Highline, Kent, and Renton",
        x = "academic year")  
 ```
@@ -457,9 +461,9 @@ results_schools %>%
   
 ```
 
-## Schools with closest %
+## Most equal representation
 
-Likely to be schools with few POC among both
+Likely to be schools with relatively few POC among both
 
 ```{r, most equiv results by school}
 results_schools %>% 
