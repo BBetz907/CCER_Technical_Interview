@@ -32,6 +32,10 @@
 *.shp
 *.dbf
 
+#no html output or R project
+*.html
+*.Rproj
+
 #nothing from these folders
 AI/*
 GIS/*
@@ -40,3 +44,4 @@ Images/Story/*
 Graphics/*
 Data/*
 Dataout/*
+**/*files*/
