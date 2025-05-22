@@ -6,6 +6,8 @@ format: revealjs
 editor: visual
 ---
 
+
+
 ## Analytic Questions
 
 -   What is the current level of representation of students and educators of color?
@@ -15,6 +17,8 @@ editor: visual
 -   What schools have the highest/lowest representation of people of color among educators? Which schools have the most equal representation?
 
 <!-- ## Load Packages -->
+
+
 
 ```{r}
 #| echo: false
@@ -29,7 +33,11 @@ library(janitor) #cleans column names
 library(gt) #tools for tabels
 ```
 
+
+
 <!-- ## Data Ingestion -->
+
+
 
 ```{r}
 #| echo: false
@@ -63,7 +71,11 @@ walk2(
 
 ```
 
+
+
 <!-- ## Data Munging-->
+
+
 
 ```{r}
 #| echo: false
@@ -217,6 +229,8 @@ year_recent <- results_total %>%
 
 ```
 
+
+
 ## Representation of People of Color
 
 during the `r year_recent` academic year across the Road Map Region
@@ -234,6 +248,8 @@ during the `r year_recent` academic year across the Road Map Region
 ## Trends show small improvements
 
 But a wide gap remains
+
+
 
 ```{r}
 results_total %>% 
@@ -320,7 +336,11 @@ plot_xy <- function(df) {
 }
 ```
 
+
+
 ## Comparison by school type & grade
+
+
 
 ```{r}
 
@@ -375,7 +395,65 @@ results_schools %>%
        caption ="alternative configurations include \"K-12\" or \"middle + high school\" among others")
 ```
 
+```{r, results elementary:high school}
+
+results_schools %>% 
+  #munge
+  mutate(
+        #sum grade flags to identify schools that cover multiple levels
+        #elementatry, middle, high school
+        grade_flags = rowSums(select(., ends_with("school_flag")), 
+                               na.rm = "TRUE"),
+        #encode levels (grade) from _flag fields, deferring to
+        #early learning schools (pre-elementary) and coding
+        #schools with multiple grade flags as "alternative"
+        ## set values as factors to facillitate sort
+        grade = factor(
+                  str_remove(
+                    case_when(school_type %in% 
+                               c("Early Learning", "Special Education School") ~ 
+                                str_to_lower(school_type),
+                              grade_flags > 1 ~ "alternative config.",
+                              .default = case_when(
+                                high_school_flag == 1 ~ "high school",
+                                middle_school_flag == 1 ~ "middle school",
+                                elementary_school_flag == 1 ~ "elementary school"
+                         )), 
+                    " school"), #remove "school" from name
+                        #set factor levels to facillitate sort
+                        levels = c("early learning", "elementary", "middle","high",
+                                   "special education", "alternative config.")),
+         ) %>% 
+  
+  filter(!is.na(school_type), #exclude NA (districts)
+         grade %in% c( "elementary", "middle","high")
+         # !str_detect(school_type, "Vocation") #exclude vocational schools?
+         ) %>% 
+  
+  #final cleaning with specific variables
+  group_by(academicyear, focus, grade) %>% 
+  summarise_weighted_percentage() %>% 
+
+  
+  #plot using custom plots defined above
+  plot_xy() +
+  
+  #create facets with grade field
+  #put all on the same line
+  facet_wrap(~grade, nrow = 1) +
+
+  #set label values
+  labs(title = "Higher percentage of <span style='color:#1e87a5;'>students</span> who are people of color, compared to <span style='color:#83dbfb;'>educators</span> across school types/levels",
+       # subtitle = "Is there one group that stands out?",
+       x = "academic year", 
+       caption ="alternative configurations include \"K-12\" or \"middle + high school\" among others")
+```
+
+
+
 ## School district comparison
+
+
 
 ```{r, results by school district}
 #district level results
@@ -438,7 +516,11 @@ clean_school_summaries <- function(df) {
 }
 ```
 
+
+
 ## Schools with highest percentages of teachers who are people of color
+
+
 
 ```{r, top results by school}
 results_schools %>% 
@@ -451,7 +533,11 @@ results_schools %>%
   
 ```
 
+
+
 ## Schools with lowest percentages of teachers who are people of color
+
+
 
 ```{r, bottom results by school}
 results_schools %>% 
@@ -464,9 +550,13 @@ results_schools %>%
   
 ```
 
+
+
 ## Most equal representation
 
 Likely to be schools with relatively few POC among both
+
+
 
 ```{r, most equiv results by school}
 results_schools %>% 
@@ -481,11 +571,13 @@ results_schools %>%
   
 ```
 
+
+
 ## Questions for parent leaders
 
-What outcomes do you think will be most impacted by increasing the \# and % of educators of color?
+What outcomes do you think will be most impacted by *increasing the \# and % of educators of color?*
 
-Increasing representation everywhere is the vision. In the context of limited resources, where do we start?
+*Increasing representation everywhere is the vision.* In the context of limited resources, **where do we start?**
 
 1.  Focus on saturating a subset of schools: for maximum impact for learners now (also great for evaluation)
 
@@ -515,17 +607,17 @@ No statistical tests or modeling
 
 -   The audience is non-technical
 
-Limited time calls for data mining –\> high level analysis (aggregating subgroups)
+Limited time limits level of data exploration–\> high level analysis (aggregating subgroups)
 
 ## Challenges
 
--   duplication in the data (teacher experience & education)
+-   long format / person-attribute data (teacher experience & education)
 
 -   totals and sub-totals (sometimes rows, sometimes columns)
 
 -   limited time to emphasize or explore the depth of the data
 
-Many possible **programming languages** and **reporting tools**: <br> R and Quarto provide an efficient way to create presentations; facillitate collaboration; and promote transparency
+Many possible **programming languages** and **reporting tools**: <br> R and Quarto provide an efficient way to create presentations; facilitate collaboration; and promote transparency
 
 ![](Graphics/tools.png){fig-alt="Tools" fig-align="center"}
 
@@ -540,6 +632,8 @@ Data Exploration –\> Munging –\> More exploration –\> Viz
 -   Tables/heat maps for specific data points
 
 # Moving Forward
+
+
 
 ```{r, Results by school type}
 #| echo: false
@@ -570,3 +664,4 @@ results_schools %>%
 
 
 ```
+

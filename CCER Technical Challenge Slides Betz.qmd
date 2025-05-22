@@ -1,0 +1,975 @@
+---
+title: "Representation Matters"
+subtitle: "Data Analytics Engineer Technical Challenge"
+author: "*Bourke Betz*"
+format: revealjs
+editor: visual
+---
+
+## Analytic Questions
+
+-   What is the current level of representation of students and educators of color?
+
+-   Have schools across the Road Map Region increased representation of educators of color during the time period? What types of schools have done so more or less?
+
+-   What schools have the highest/lowest representation of people of color among educators? Which schools have the most equal representation?
+
+<!-- ## Load Packages -->
+
+```{r, packages}
+#| echo: false
+#| results: "hide"
+#| warning: false
+#| error: false
+
+library(tidyverse) #standard tools for data munging and visualization
+library(ggtext) #turns titles into html
+library(glitr) #custom package of visualization elements 
+library(janitor) #cleans column names
+library(gt) #tools for tabels
+library(patchwork) #for aligning multiple charts
+```
+
+<!-- ## Data Ingestion -->
+
+```{r, load files}
+#| echo: false
+#| results: "hide"
+#| warning: false
+#| error: false
+
+filepath = "Data/" #define where to look for data
+filepaths <- list.files(path = filepath, pattern = ".txt$") %>% str_c(filepath, .) #create full filename with path
+
+#extract lowercase names, without filetype or reference for naming dataframes
+names <- filepaths %>% 
+  str_extract(pattern = "(?<=^Data\\/).+(?=\\.txt$)") %>% 
+  str_to_lower() %>% 
+  str_replace(pattern = "reference", replacement = "s")
+
+#assign names to data frames after reading them 
+#and dropping summary info from tail of file
+walk2(
+      #select school and results data= .x
+      filepaths, 
+      #select names = .y
+      names,
+      #assign the above to read and establish data frames
+      ~{assign(.y, 
+             read_delim(file = .x, delim = "|") %>% 
+               janitor::clean_names() %>% 
+               dplyr::slice(1:n() - 1) ,
+             envir = .GlobalEnv)      }
+    )
+
+```
+
+<!-- ## Data Munging-->
+
+```{r, initial munge}
+#| echo: false
+#| results: "hide"
+#| warning: false
+
+## clean results
+results_prep <- results %>% 
+  
+  #recode percent_students to align with naming convention of denominator
+    #this field contains teacher and student information
+  rename(percentage = percentage_students) %>%
+  
+  #create new indicator data for filters, aggregation, and analysis
+  mutate(
+        #Refine indicator paramaters 
+        focus = 
+           if_else(str_detect(indicator,"^Teacher"),
+                   "Teacher",
+                   "Student"),
+         topic =
+                 if_else(str_detect(subgroup, "Years Experience:"), 
+                             "Experience",
+                             "Representation"),
+         poc= if_else(
+                     topic == "Representation",
+                     !subgroup %in% 
+                       c("White"), 
+                     # sets TRUE for POC, FALSE for white, na, or master
+                     NA), # sets NA for teacher 
+         experience = str_extract(subgroup, "(?<=\\:\\s).+$"), #just in case
+         school_code = as.double(school_code) #recode as numeric for later join
+         ) %>% 
+  
+  #apply filters
+  filter(!is.na(poc), #exclude teacher years of experience, coded as NA for POC
+         !subgroup %in% c("Masters Degree or Higher","Not Provided"),
+         # poc == TRUE, #include only poc, since denominators require no aggregation
+         # is.na(school_code) #filter for testing and quality control only
+         )
+
+#test to ensure that education level is excluded here
+results_prep %>% 
+  #select non-school specific fields to obtain totals
+  select(academicyear, focus, poc, contains("road_map")) %>% 
+  #use unique() to remove duplicates
+  unique() %>% 
+  #group_by and summarize
+    #exclude subgroup which was preventing aggregation,
+    #exclude percentage which will be aggregated 
+  group_by(academicyear, focus, poc) %>% 
+  summarise(road_map_region_percentage = 
+              sum(road_map_region_percentage, na.rm = TRUE),
+            .groups = "drop") %>% 
+  arrange(academicyear, focus, poc) %>% 
+  group_by(academicyear, focus) %>% 
+  mutate(percentage = sum(road_map_region_percentage)) %>% 
+  ungroup() %>% filter(round(percentage)!=1) %>% glimpse()
+           
+
+
+## calculate road_map_region totals (noting some granular data are suppressed)
+results_total <- results_prep %>% 
+  #keep only POC
+  filter(poc==TRUE) %>% 
+  #select non-school specific fields to obtain totals
+  select(academicyear, subgroup, focus, poc, contains("road_map")) %>% 
+  #use unique() to remove duplicates
+  unique() %>% 
+  #group_by and summarize
+    #exclude subgroup which was preventing aggregation,
+    #exclude percentage which will be aggregated 
+  group_by(across(-c(subgroup, road_map_region_percentage))) %>% 
+  summarise(road_map_region_percentage = 
+              sum(road_map_region_percentage, na.rm = TRUE),
+            .groups = "drop") %>% 
+  unique() #select distinct rows
+           
+
+## calculate percentage students and educators of color at schools, districts
+## group by year, student/teacher, poc/white
+results_by_school <- results_prep %>% 
+    #keep only POC
+  filter(poc==TRUE) %>% 
+  #keep only relevant columns
+  select(academicyear:school, focus, poc, percentage, denominator
+         # contains("percentage"), contains("denominator")
+         ) %>% glimpse() %>% 
+  #group by all but percentage and summarize (sum)
+  #note road_map region and denominators are already aggregated
+  group_by(
+    across(-c(percentage))
+    ) %>% 
+  summarise(across(c(percentage, #denominator
+                     ), 
+                   sum, na.rm = TRUE),
+            # across(c(road_map_region_numerator, road_map_region_denominator), 
+            #        mean, na.rm = TRUE),
+            .groups = "drop"
+            ) %>% 
+  unique() #select distinct rows
+
+#reconstitute school and district results with region wide totals
+results_cleaned <- results_by_school %>% inner_join(results_total) 
+
+
+#using transformed school data, join with school reference 
+#this will enable additional analysis about schools
+results_schools <-
+  results_cleaned %>% 
+  #include all school data using left join, 
+  #rather than only individual schools with inner
+  left_join(schools %>% 
+              
+              #redefine academicyear value as numeric to facillitate join
+              mutate(academicyear=as.double(academicyear)) %>% 
+              
+              #limit the fields from the new data set
+               select(academicyear,starts_with("school"),
+                      district_code,ends_with("flag")),
+            
+            #specify join clauses
+             by=c("academicyear", "school_code", "district_code"),
+              keep = FALSE 
+            )
+```
+
+```{r, establish BANs}
+#| echo: false
+#| results: "hide"
+#| warning: false
+
+# extract most recent values to highlight in Big Numbers for presentation
+
+percentage_student_poc <- results_total %>% 
+  filter(academicyear==max(academicyear),
+         focus == "Student") %>% 
+  pull(road_map_region_percentage) %>% 
+  scales::percent()
+                   
+percentage_teacher_poc <- results_total %>% 
+  filter(academicyear==max(academicyear),
+         focus == "Teacher") %>% 
+  pull(road_map_region_percentage) %>% 
+  scales::percent()                                
+
+year_recent <- results_total %>% 
+  filter(academicyear==max(academicyear)) %>% 
+  count(academicyear) %>% 
+           pull(academicyear)
+
+```
+
+## Representation of People of Color
+
+during the `r year_recent` academic year across the Road Map Region
+
+<br>
+
+### **`r percentage_student_poc`** of students
+
+<br> but just
+
+<br>
+
+### **`r percentage_teacher_poc`** of teachers
+
+## Trends show small improvements
+
+But a wide gap remains
+
+```{r, visualize top line trends of percentage poc}
+results_total %>% 
+  #create labels for first and last year
+  mutate(percent_min_max = case_when(academicyear==min(academicyear) | 
+                                       academicyear==max(academicyear) ~
+                                       road_map_region_percentage)) %>% 
+  #plot
+  ggplot(aes(x=academicyear, y=road_map_region_percentage, color=focus)) +
+  geom_point(size=4) +
+  geom_line(linewidth=1.5) +
+  geom_text(aes(label=scales::percent(percent_min_max,1)),
+            vjust = -1, size=5) +
+  #customize axes
+  scale_y_continuous(labels = scales::percent_format(),
+                     limits= c(0, 1)) +
+  scale_x_continuous(breaks = unique(results_total$academicyear)) +
+  #apply custom theme
+  glitr::si_style_ygrid() +
+  #apply custom colors
+  scale_color_manual(values =c(
+                    "Student" = glitr::scooter,
+                    "Teacher" = glitr::scooter_light)) +
+  #define themes
+  theme(
+        legend.position = "none", #hide legend
+        axis.title.y= element_blank(), #remove y axis title
+        axis.title.x = element_text(vjust = -1), #move x axis title downards
+        plot.title = element_markdown(), #allow coloring in title
+        # plot.subtitle = element_markdown(), #allow coloring in subtitle
+        ) +
+  #set labels
+  labs(
+    title = "Across the Road Map Region, there remains a substantially higher percentage of <span style='color:#1e87a5;'>students</span><br>who are people of color, compared to <span style='color:#83dbfb;'>educators</span>",
+       # subtitle = "Representation of people of color is increasing among both educators adn students.<br>",
+       x = "academic year")
+```
+```{r, school (district) ratio munge}
+#| echo: false
+#| results: "hide"
+#| warning: false
+#| error: false
+#data prep for ratio of students to teachers by race/ethnicity by school, district
+
+# clean ratio data with ranks for heat maps and bump charts, based on counts
+# assembled for district level
+##adjustable to schools easily with filter###############################
+##adjustable to school type mediumly using join
+rr_district <- results %>%
+    filter(
+    school == "All Schools in District",
+    str_detect(indicator, "Demographics"),
+    !str_detect(subgroup, "Years\\sExp"),
+    !subgroup %in% c( "Masters Degree or Higher",
+                      # ""
+                      "Not Provided"
+                      ),
+    ) %>%   
+  rename(percentage=percentage_students) %>% glimpse()
+
+rr_region <- results %>%
+    filter(
+    str_detect(indicator, "Demographics"),
+    !str_detect(subgroup, "Years\\sExp"),
+    !subgroup %in% c( "Masters Degree or Higher",
+                      # ""
+                      "Not Provided"
+                      ),
+    ) %>% 
+  select(-starts_with("district"), -starts_with("school"), -denominator, -percentage_students) %>% 
+  unique() %>% 
+  rename(denominator = road_map_region_denominator,
+         percentage = road_map_region_percentage) %>% 
+  mutate(
+         district = "Road Map Region",
+         area = district
+         # school = ""
+         ) %>% 
+  glimpse()
+
+rr <- bind_rows(rr_district, rr_region) %>%  
+  mutate(focus=if_else(indicator=="Demographics", "Student", "Teacher"),
+         numerator = 
+                denominator*percentage,
+         district = recode(district, "South Seattle" = "South Seattle Schools")) %>% 
+  select(academicyear, subgroup, focus, district, school, numerator, denominator, percentage) %>% 
+  unique() %>% 
+  pivot_longer(cols = c("numerator", "denominator", "percentage"),
+               names_to = "measure",
+               values_to = "value") %>% 
+  pivot_wider(names_from = focus, 
+              values_from = value,
+              values_fn = mean,
+              names_glue = "{focus}s") %>% 
+  # separate(measure, into = c("area", "measure"), sep = "_(?=[a-z]+$)") %>% 
+  mutate(ratio=Students/Teachers,
+         area = district,
+         # area = str_to_title(
+  #          str_replace_all(area, "\\_", " "))
+         ) %>% 
+  group_by(academicyear, area, measure, school) %>% 
+    mutate(rank = rank(desc(ratio))) %>% # fails to break ties based on second field but thats ok
+    # arrange(desc(ratio), desc(Students)) %>% #breaks ties based on magnitude of population
+    # mutate(rank = row_number()) %>% 
+  ungroup() %>% 
+  filter(measure %in% c("numerator", "percentage")) %>% 
+  glimpse()
+
+rr_poc_subtotal <- rr %>%
+  filter(    !subgroup %in% c("White","Not Provided")) %>% 
+  group_by(academicyear, district, area, school, measure) %>% 
+  summarise(category = "Subtotal: POC",
+            subgroup = category,
+            across(c(Students, Teachers), sum),
+            .groups = "drop") %>% 
+  mutate(ratio = (Students/Teachers)) 
+
+rr_total <- rr %>% 
+  group_by(academicyear, district, school, measure) %>% 
+  summarise(category = "Total",
+            subgroup = category,
+            across(c(Students, Teachers), sum),
+            .groups = "drop") %>% 
+  mutate(ratio=(Students/Teachers)) 
+
+rr_n <- bind_rows(rr %>% mutate(category=""), 
+                         rr_poc_subtotal, rr_total) %>% 
+  filter(!subgroup %in% c("Not Provided"), #do not picture "NA"
+         measure=="numerator")  #include only counts of people
+
+```
+
+```{r, regionwide ratio highlight table munge}
+#data prep for ratio of students to teachers by race/ethnicity by region
+breakdown <- results %>% 
+  select(academicyear, subgroup, indicator, starts_with("road_map")) %>%
+  
+  unique() %>% #select distinct in SQL
+  
+  filter(
+    # academicyear==max(academicyear),
+    str_detect(indicator, "Demographics"),
+    !str_detect(subgroup, "Years\\sExp"),
+    !subgroup %in% c( "Masters Degree or Higher"#,
+                      # "White",
+                      # "Not Provided"
+                      ),
+    ) %>%  
+  mutate(focus=if_else(indicator=="Demographics", "Student", "Teacher"),
+         road_map_region_numerator = 
+                road_map_region_denominator*road_map_region_percentage) %>% 
+  select(-indicator, -road_map_region_denominator) %>% 
+  pivot_longer(cols = starts_with("road_map_"),
+               names_to = "measure",
+               values_to = "value") %>% 
+  pivot_wider(names_from = focus, 
+              values_from = value,
+              values_fn = mean,
+              names_glue = "{focus}s") %>% 
+  separate(measure, into = c("area", "measure"), sep = "_(?=[a-z]+$)") %>% 
+  mutate(ratio=round(Students/Teachers,0),
+         area = str_to_title(
+           str_replace_all(area, "\\_", " "))
+         )
+
+breakdown_poc_subtotal <- breakdown %>%
+  filter(    !subgroup %in% c("White","Not Provided")) %>% 
+  group_by(academicyear, area, measure) %>% 
+  summarise(category = "Subtotal: POC",
+            subgroup = category,
+            across(c(Students, Teachers), sum),
+            .groups = "drop") %>% 
+  mutate(ratio=round(Students/Teachers,0)) 
+
+breakdown_total <- breakdown %>% 
+  group_by(academicyear, area, measure) %>% 
+  summarise(category = "Total",
+            subgroup = category,
+            across(c(Students, Teachers), sum),
+            .groups = "drop") %>% 
+  mutate(ratio=round(Students/Teachers,0)) 
+
+breakdown_n <- bind_rows(breakdown %>% mutate(category=""), 
+                         breakdown_poc_subtotal, breakdown_total) %>% 
+  filter(!subgroup %in% c("Not Provided"), #do not picture "NA"
+         measure=="numerator")  #include only counts of people
+
+```
+
+## Who is Unequally Represented?
+
+Ratio of students to teachers (n : 1) in the region during `r max(unique(breakdown_n$academicyear))`
+
+```{r, highlight table roadmap region}
+breakdown_n %>% 
+  filter(academicyear==max(academicyear),
+         ) %>% 
+  arrange(category, desc(ratio)) %>% 
+  
+  #this fails, skip:
+  #mutate(Ratio = str_c(ratio, ":", "1", sep = " ")) %>% #switch to text ratio
+  
+  rename(Subgroup = subgroup,
+         `Ratio (n : 1)` = ratio) %>% 
+  gt() %>% 
+  cols_move(columns = c(`Ratio (n : 1)`),
+            after = c(Subgroup)
+            ) %>% 
+  cols_hide(columns = c(category, area, academicyear, measure)) %>%
+  fmt_number(columns = c("Students", "Teachers"), #comma format for counts
+             decimals = 0,
+             use_seps = TRUE) %>% 
+  
+  #format all cells as bigger
+    tab_style(
+    style = cell_text(size = px(20)), 
+    locations = cells_body(
+      rows = category == ""
+    )
+  ) %>% 
+  #format subtotal in bold
+  tab_style(
+    style = cell_text(size = px(20), weight = "bold", color = grey60k),
+    locations = cells_body(
+      rows = category == "Subtotal: POC"
+    ) 
+  ) %>% 
+  #format total in bold
+  tab_style(
+    style = cell_text(size = px(20), weight = "bold"),
+    locations = cells_body(
+      rows = category == "Total"
+    ) 
+  ) %>% 
+  
+  #add a label for columns to specify measure
+  tab_spanner(label = "Counts", 
+              columns = c("Students","Teachers")) %>% 
+  #make a highlight table
+  data_color(columns = c(`Ratio (n : 1)`), #apply to ratio
+             rows = category != "Total", #apply to rows without totals
+             colors = scales::col_numeric(
+              palette = c(grey30k, glitr::burnt_sienna_light, burnt_sienna),
+              domain = breakdown_n$ratio)
+  )
+  
+```
+
+## Representation Over Time
+```{r bump chart of rank and ratio by school district}
+# Bump chart
+## iterate to create for all districts, region
+
+select_district <- rr_n %>% select(district) %>% unique() %>% 
+  filter(district == district[9]) %>% pull()
+
+ind_ratio <- rr_n %>% 
+  filter(category == "Total",
+         district==select_district) %>% 
+  group_by(district) %>% 
+  summarise(ratio = median(round(ratio, 0)),
+            ratio_max = max(round(ratio, 0)),
+            ratio_min = min(round(ratio, 0)),
+            warning = case_when(ratio_max > ratio + 2 |
+                                  ratio_min < ratio - 2 ~ "warning")
+            ) %>% pull(ratio)
+
+
+rr_viz <- rr_n %>%
+  filter(district==select_district,
+    # academicyear == max(academicyear)
+    ) %>% 
+  mutate(lratio = case_when(academicyear == max(academicyear) |
+                              academicyear == min(academicyear) ~ ratio),
+         lsubgroup = case_when(academicyear == max(academicyear) ~ 
+                                    subgroup)) 
+
+a <- rr_viz %>% 
+  filter(category == "") %>% 
+ggplot(aes(x=academicyear, y=rank)) +
+  geom_line(aes(linewidth = Students, color = subgroup)) +
+  geom_point(size=9, aes(color=subgroup)) +
+  #label ratio above top and bottom points
+  geom_text(aes(label = round(lratio)), color=grey10k) +
+  #label each lineby subgroup
+  geom_text(aes(label = lsubgroup,
+                color = subgroup), 
+            fontface = "bold",
+            nudge_x = 1.3) +
+  #expand x-axis for labels
+  scale_x_continuous(
+    limits = c(min(rr_n$academicyear), max(rr_n$academicyear) + 2),
+    breaks = seq(from = min(rr_n$academicyear), by = 1, length.out = 7)
+  ) +
+  scale_y_reverse(breaks = 1:7) +
+  #assign colors by subgroup
+  scale_color_manual(values = c(
+  "Pacific Islander"  = "#E69F00",
+  "Latinx" = "#56B4E9",
+  "Black/African American" = "#009E73",
+  "Native American" = "#9467BD",
+  "Asian" = "#0072B2",
+  "Multiracial" =  "#A2A475",
+  "White" = grey30k
+  ))+
+  si_style_nolines() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        plot.title = element_markdown(),
+        plot.subtitle = element_markdown(),
+        plot.caption.position = "panel",
+        plot.caption = element_markdown(hjust = 0.45,
+                                    margin = margin(t=20))) +
+  labs(title = glue::glue("Ratio of students per teacher by racial/ethnic group in {unique(rr_viz$district)}"),
+       subtitle = "Order shows rank (most underrepresented to least, top to bottom). Values within circles show ratio of students to teachers.<br>Width of lines reflect number of students (thicker lines indicate higher numbers).",
+       caption = glue::glue("Reference ratio of students to teachers is approximately **{ind_ratio} : 1**, irrespective of race/ethnicity"))
+
+a
+
+
+# 
+# b <- rr_viz %>% 
+#   filter(category == "Total") %>% 
+#     mutate(lsubgroup = case_when(academicyear==max(academicyear) ~ str_wrap("Reference Ratio: Students per Teacher", width = 20))) %>% 
+#   
+# ggplot(aes(x=academicyear, y=subgroup)) +
+#   # geom_point(shape = "square", color = grey20k, size=8) +
+#   # label points
+#   geom_text(aes(label = round(ratio, 0)), colour = grey50k) + 
+#   #label series
+#   geom_text(aes(label = lsubgroup),
+#             nudge_x = 1.3,
+#             color = grey50k
+#             ) +
+#  #expand x-axis for labels
+#   scale_x_continuous(
+#     limits = c(min(rr_n$academicyear), max(rr_n$academicyear) + 2),
+#     breaks = seq(from = min(rr_n$academicyear), by = 1, length.out = 7)
+#   ) +
+#   # scale_y_discrete(position = "right") +
+#   
+#   si_style_nolines() +
+#   theme(axis.title = element_blank(),
+#         axis.text = element_blank())
+
+# a / b + patchwork::plot_layout(heights = c(8, 1))
+```
+
+
+## Representation by distict
+```{r, heat map of districts single year}
+#Heat Map
+```
+
+
+```{r summarize function}
+# <!-- ## Define weighted function for repeated use to adjust for the size of denominators -->
+summarise_weighted_percentage <- function(df) {
+  df %>% 
+  summarise(percentage=sum(percentage*denominator, na.rm = TRUE) /  
+                       sum(denominator, na.rm = TRUE),
+            .groups = "drop") 
+}
+```
+
+```{r, plot function for percentages}
+# <!-- ## Define plot format for repeated use-->
+plot_xy <- function(df) {
+  
+  #plot
+  ggplot(df, aes(x=academicyear, y=percentage, color=focus)) +
+  #point and line geometries
+  geom_point(size=3) +
+  geom_line(size=1.5) +
+  #custom theme
+  glitr::si_style_ygrid() +
+  #apply custom colors
+  scale_color_manual(values =c(
+                    "Student" = glitr::scooter,
+                    "Teacher" = glitr::scooter_light)) +
+  #custom themes
+  theme(legend.position = "none", #hide legend since it is encoded in title
+        axis.title.y= element_blank(), #hide y axis title
+        axis.title.x = element_text(vjust = -1), #move x axis title downards
+        strip.text = element_markdown(size=10.5), #increase size of header text
+        plot.title = element_markdown(margin = margin(b = 10)), 
+          #allow encoding of color, add space beneath
+        plot.subtitle = element_markdown(margin = margin(b=10)),
+          #allow encoding of color, add space beneath
+        plot.caption = element_text(hjust=2, #move caption downwards, create space
+                                    margin = margin(t = 10, b = 0) ),
+        ) +
+  #establish 100% scale on y axis
+  scale_y_continuous(labels = scales::percent_format(),
+                     breaks = c(0,0.25,0.5,0.75,1),
+                     limits= c(-0.05, 1.05)) + 
+  #establish x axis labels
+  scale_x_continuous(breaks = c(2015, 2018, 2021)
+    # breaks = unique(results_schools$academicyear)
+    )
+}
+```
+
+## School district comparison
+
+```{r, results by school district}
+#district level results
+results_schools %>% 
+  filter(is.na(school_code),  #keep only districts not specific school
+         district_code!=90000 #exclude roadmap region, add back later
+         ) %>% 
+  group_by(academicyear, focus, district, percentage) %>%
+  #no aggregation needed as this was pre-calculated
+  summarise(.groups = "drop") %>% 
+  
+#union to roadmap district summary data
+bind_rows(  
+results_total %>% 
+  #munge to align region totals and district totals
+  select(academicyear, focus, road_map_region_percentage) %>% 
+  mutate(district = "zRoad Map Region") %>% 
+  rename(percentage = road_map_region_percentage)
+) %>% 
+
+  #plot
+  plot_xy() +
+  #create facets for district, spread across 2 rows
+  facet_wrap(~district, nrow=2) +
+  #establish labels
+  labs(title = "Percentage of <span style='color:#1e87a5;'>students</span> who are people of color compared to <span style='color:#83dbfb;'>educators</span>",
+       subtitle = "Progress in Federal Way, Highline, Kent, and Renton",
+       x = "academic year")  
+```
+
+## Comparison by school type & grade
+
+```{r, compare percentage by school type and grade}
+
+results_schools %>% 
+  #munge
+  mutate(
+        #sum grade flags to identify schools that cover multiple levels
+        #elementatry, middle, high school
+        grade_flags = rowSums(select(., ends_with("school_flag")), 
+                               na.rm = "TRUE"),
+        #encode levels (grade) from _flag fields, deferring to
+        #early learning schools (pre-elementary) and coding
+        #schools with multiple grade flags as "alternative"
+        ## set values as factors to facillitate sort
+        grade = factor(
+                  str_remove(
+                    case_when(school_type %in% 
+                               c("Early Learning", "Special Education School") ~ 
+                                str_to_lower(school_type),
+                              grade_flags > 1 ~ "alternative config.",
+                              .default = case_when(
+                                high_school_flag == 1 ~ "high school",
+                                middle_school_flag == 1 ~ "middle school",
+                                elementary_school_flag == 1 ~ "elementary school"
+                         )), 
+                    " school"), #remove "school" from name
+                        #set factor levels to facillitate sort
+                        levels = c("early learning", "elementary", "middle","high",
+                                   "special education", "alternative config.")),
+         ) %>% 
+  
+  filter(!is.na(school_type), #exclude NA (districts)
+         # !str_detect(school_type, "Vocation") #exclude vocational schools?
+         ) %>% 
+  
+  #final cleaning with specific variables
+  group_by(academicyear, focus, grade) %>% 
+  summarise_weighted_percentage() %>% 
+
+  
+  #plot using custom plots defined above
+  plot_xy() +
+  
+  #create facets with grade field
+  #put all on the same line
+  facet_wrap(~grade, nrow = 1) +
+
+  #set label values
+  labs(title = "Higher percentage of <span style='color:#1e87a5;'>students</span> who are people of color, compared to <span style='color:#83dbfb;'>educators</span> across school types/levels",
+       # subtitle = "Is there one group that stands out?",
+       x = "academic year", 
+       caption ="alternative configurations include \"K-12\" or \"middle + high school\" among others")
+```
+
+## Comparison by school grade
+
+```{r}
+results_schools %>% 
+  #munge
+  mutate(
+        #sum grade flags to identify schools that cover multiple levels
+        #elementatry, middle, high school
+        grade_flags = rowSums(select(., ends_with("school_flag")), 
+                               na.rm = "TRUE"),
+        #encode levels (grade) from _flag fields, deferring to
+        #early learning schools (pre-elementary) and coding
+        #schools with multiple grade flags as "alternative"
+        ## set values as factors to facillitate sort
+        grade = factor(
+                  str_remove(
+                    case_when(school_type %in% 
+                               c("Early Learning", "Special Education School") ~ 
+                                str_to_lower(school_type),
+                              grade_flags > 1 ~ "alternative config.",
+                              .default = case_when(
+                                high_school_flag == 1 ~ "high school",
+                                middle_school_flag == 1 ~ "middle school",
+                                elementary_school_flag == 1 ~ "elementary school"
+                         )), 
+                    " school"), #remove "school" from name
+                        #set factor levels to facillitate sort
+                        levels = c("early learning", "elementary", "middle","high",
+                                   "special education", "alternative config.")),
+         ) %>% 
+  
+  filter(!is.na(school_type), #exclude NA (districts)
+         grade %in% c("elementary", "middle", "high")
+         # !str_detect(school_type, "Vocation") #exclude vocational schools?
+         ) %>% 
+  
+  #final cleaning with specific variables
+  group_by(academicyear, focus, grade) %>% 
+  summarise_weighted_percentage() %>% 
+
+  
+  #plot using custom plots defined above
+  plot_xy() +
+  
+  #create facets with grade field
+  #put all on the same line
+  facet_wrap(~grade, nrow = 1) +
+
+  #set label values
+  labs(title = "Higher percentage of <span style='color:#1e87a5;'>students</span> who are people of color, compared to <span style='color:#83dbfb;'>educators</span> across school types/levels",
+       # subtitle = "Is there one group that stands out?",
+       x = "academic year", 
+       caption ="alternative configurations include \"K-12\" or \"middle + high school\" among others")
+```
+
+
+
+```{r, define custom table format}
+#| echo: false
+#| results: "hide"
+#| warning: false
+
+custom_gt <- function(df) {  df %>% 
+  mutate(across(c("student","teacher"), ~replace_na(.,0))) %>% 
+    #replace na values with 0 for both measures
+  head(12) %>% #keep only top 12 rows for fit
+  gt::gt() %>% #apply great tables
+  gt::tab_spanner(label = "% POC", #add a label for columns to specify measure
+              columns = c("student","teacher")) %>% 
+  gt::fmt_percent( #format values as percentages
+    columns = c(student, teacher),
+    decimals = 0)}
+```
+
+```{r, define custom function for munging data for tables}
+clean_school_summaries <- function(df) {
+  df %>% 
+  filter(academicyear==max(academicyear)) %>% #keep only most recent year
+  rename(school=school.x) %>% #rename school field left side of join
+  group_by(focus, school) %>% #group by focus and school
+  summarise_weighted_percentage() %>%  #summarise
+    
+  #pivot wider to compare teacher and learner values in tables
+  pivot_wider(names_from = "focus",
+              names_glue = "{stringr::str_to_lower(focus)}", #make field names lc
+              values_from = "percentage")
+}
+```
+
+## Schools with highest percentages of teachers who are people of color
+
+```{r, top results by school}
+results_schools %>% 
+  #apply custom munging function
+  clean_school_summaries() %>% 
+  #sort by % poc among teachers, descending
+  arrange(desc(teacher)) %>% 
+  #apply custom great_table function
+  custom_gt()
+  
+```
+
+## Schools with lowest percentages of teachers who are people of color
+
+```{r, bottom results by school}
+results_schools %>% 
+  #apply custom munging function
+  clean_school_summaries() %>% 
+  #sort by % poc among teachers, ascending
+  arrange(teacher) %>% 
+  #apply custom great_table function
+  custom_gt()
+  
+```
+
+```{r, most equiv results by school}
+#| echo: false
+#| eval: false
+#| results: "hide"
+#| warning: false
+
+## Most equal representation
+
+# Likely to be schools with relatively few POC among both
+
+results_schools %>% 
+  #apply custom munging function
+  clean_school_summaries() %>% 
+  #create sorting variable, absolute value difference in representation
+  mutate(diff = scales::percent(abs(student-teacher), accuracy = 2)) %>% 
+  #sort by difference in representation of POC then drop sort field
+  arrange(diff) %>% select(-diff) %>% 
+  #apply custom great_table function
+  custom_gt()
+  
+```
+
+## Questions for parent leaders
+
+*Increasing representation everywhere is the vision.* In the context of limited resources, **where do we start?**
+
+1.  Focus on saturating a subset of schools: for maximum impact for learners now (also great for evaluation)
+
+2.  A specific-level of school (for example, high school or elementary)
+
+3.  Specific groups? Region-wide data suggest Pacific Islanders, Latinx but this will vary by school & district
+
+4.  Some other strategy?
+
+## Additional directions
+
+-   People of Color are not a monolith: further investigate representation of specific racial/ethnic groups
+
+-   Some investigation of counts (in addition to percents)
+
+-   Outcome evaluation: identify key metrics and compare schools with more equal representation of people of color versus those with less
+
+-   Look to schools/districts that have had more success in increasing representation for insights
+
+# Approach & Rationale
+
+## Methods
+
+No statistical tests or modeling
+
+-   The disparity is obvious and substantial. Even the trends are fairly consistent.
+
+-   There are no learning outcomes in the data provided and the time alotted would be insufficient for modeling
+
+-   The audience is non-technical
+
+Limited time limits level of data exploration–\> high level analysis (aggregating subgroups)
+
+## Challenges
+
+-   long format person-attribute data (teacher experience & education)
+
+-   totals and sub-totals (sometimes rows, sometimes columns)
+
+-   limited time to emphasize or explore the depth of the data
+
+Many possible **programming languages** and **reporting tools**: <br> R and Quarto provide an efficient way to create presentations; facilitate collaboration; and promote transparency
+
+![](Graphics/tools.png){fig-alt="Tools" fig-align="center"}
+
+## Visualization
+
+Data Exploration –\> Munging –\> More exploration –\> Viz
+
+-   Big numbers
+
+-   Trends (highlighting small progress and making comparisons across relevant groups)
+
+-   Tables/heat maps for specific data points
+
+# Moving Forward
+
+```{r, Results by school type}
+#| echo: false
+#| eval: false
+#| results: "hide"
+#| warning: false
+
+# <!-- ## Define plot format -->
+  # UNUSED CHARTS
+
+#final cleaning
+results_schools %>% 
+  group_by(academicyear, focus, school_type) %>% 
+  summarise_weighted_percentage() %>% 
+  #exclude NA (districts) and vocational_school with small volume
+  filter(!is.na(school_type),
+         !str_detect(school_type, "Vocation")) %>% 
+  
+#plot using custom plots defined above
+  plot_xy() +
+  
+  #create facets
+  facet_wrap(~school_type, nrow = 2) +
+  scale_x_continuous(
+    # breaks = unique(results_schools$academicyear)
+    ) 
+
+
+
+```
+
+```{r}
+#| echo: false
+#| eval: false
+#| results: "hide"
+#| warning: false
+
+breakdown %>% 
+  filter(measure=="percentage") %>%
+  pivot_longer(cols = c("Students", "Teachers"),
+               names_to = "focus",
+               values_to = "value") %>%
+  ggplot(aes(x=academicyear, y=value)) +
+  geom_col() +
+  geom_text(aes(label=scales::percent(value, accuracy = 0.1)),
+            vjust=-0.1) +
+  scale_y_continuous(limits = c(0, 1)) +
+  facet_grid(vars(subgroup), vars(focus)) +
+  theme(strip.text.y = element_text(angle = 0),
+        axis.text = element_blank(),
+        axis.title.x = element_blank())
+```
