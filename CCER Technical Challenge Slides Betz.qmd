@@ -8,9 +8,9 @@ editor: visual
 
 ## Analytic Questions
 
--   What is the current level of representation of students and educators of color?
+-   What is the current level of representation of students and educators of color? Which racial and ethnic groups are most/least represented?
 
--   Have schools across the Road Map Region increased representation of educators of color during the time period? What types of schools have done so more or less?
+-   Have schools increased representation of educators of color during the time period?
 
 -   What schools have the highest/lowest representation of people of color among educators? Which schools have the most equal representation?
 
@@ -272,6 +272,7 @@ results_total %>%
        # subtitle = "Representation of people of color is increasing among both educators adn students.<br>",
        x = "academic year")
 ```
+
 ```{r, school (district) ratio munge}
 #| echo: false
 #| results: "hide"
@@ -413,7 +414,7 @@ breakdown_total <- breakdown %>%
   group_by(academicyear, area, measure) %>% 
   summarise(category = "Total",
             subgroup = category,
-            across(c(Students, Teachers), sum),
+            across(c(Students, Teachers), sum, na.rm=TRUE),
             .groups = "drop") %>% 
   mutate(ratio=round(Students/Teachers,0)) 
 
@@ -455,6 +456,17 @@ breakdown_n %>%
       rows = category == ""
     )
   ) %>% 
+  
+  #add a label for columns to specify measure
+  tab_spanner(label = "Counts", 
+              columns = c("Students","Teachers")) %>% 
+  #make a highlight table
+  data_color(columns = c(`Ratio (n : 1)`), #apply to ratio
+             rows = category != "Total", #apply to rows without totals
+             colors = scales::col_numeric(
+              palette = c(grey30k, glitr::burnt_sienna_light, burnt_sienna),
+              domain = breakdown_n$ratio)
+  )  %>% 
   #format subtotal in bold
   tab_style(
     style = cell_text(size = px(20), weight = "bold", color = grey60k),
@@ -468,22 +480,12 @@ breakdown_n %>%
     locations = cells_body(
       rows = category == "Total"
     ) 
-  ) %>% 
-  
-  #add a label for columns to specify measure
-  tab_spanner(label = "Counts", 
-              columns = c("Students","Teachers")) %>% 
-  #make a highlight table
-  data_color(columns = c(`Ratio (n : 1)`), #apply to ratio
-             rows = category != "Total", #apply to rows without totals
-             colors = scales::col_numeric(
-              palette = c(grey30k, glitr::burnt_sienna_light, burnt_sienna),
-              domain = breakdown_n$ratio)
-  )
+  ) 
   
 ```
 
-## Representation Over Time
+## Unequal Representation over Time
+
 ```{r bump chart of rank and ratio by school district}
 # Bump chart
 ## iterate to create for all districts, region
@@ -491,17 +493,22 @@ breakdown_n %>%
 select_district <- rr_n %>% select(district) %>% unique() %>% 
   filter(district == district[9]) %>% pull()
 
-ind_ratio <- rr_n %>% 
+ratio_district <- rr_n %>% 
   filter(category == "Total",
-         district==select_district) %>% 
-  group_by(district) %>% 
-  summarise(ratio = median(round(ratio, 0)),
-            ratio_max = max(round(ratio, 0)),
-            ratio_min = min(round(ratio, 0)),
-            warning = case_when(ratio_max > ratio + 2 |
-                                  ratio_min < ratio - 2 ~ "warning")
-            ) %>% pull(ratio)
+         district==select_district) 
 
+#get beginning value
+ratio_district_b <- ratio_district %>% 
+      filter(academicyear == min(academicyear)) %>% 
+  pull(ratio) %>% 
+  round()
+year_b <- min(rr_n$academicyear)
+
+# get end value
+ratio_district_e <- ratio_district %>% 
+      filter(academicyear == max(academicyear)) %>% pull(ratio) %>% round()
+
+year_e <- max(rr_n$academicyear)
 
 rr_viz <- rr_n %>%
   filter(district==select_district,
@@ -546,12 +553,13 @@ ggplot(aes(x=academicyear, y=rank)) +
         axis.text.y = element_blank(),
         plot.title = element_markdown(),
         plot.subtitle = element_markdown(),
-        plot.caption.position = "panel",
-        plot.caption = element_markdown(hjust = 0.45,
+        plot.caption.position = "plot",
+        plot.caption = element_markdown(hjust = 0.32,
                                     margin = margin(t=20))) +
   labs(title = glue::glue("Ratio of students per teacher by racial/ethnic group in {unique(rr_viz$district)}"),
        subtitle = "Order shows rank (most underrepresented to least, top to bottom). Values within circles show ratio of students to teachers.<br>Width of lines reflect number of students (thicker lines indicate higher numbers).",
-       caption = glue::glue("Reference ratio of students to teachers is approximately **{ind_ratio} : 1**, irrespective of race/ethnicity"))
+       caption = glue::glue("**{ratio_district_b} : 1** ({year_b}) *student to teacher ratio*, irrespective of race/ethnicity   **{ratio_district_e} : 1** ({year_e})"),
+       y= "Rank (most to least represented)")
 
 a
 
@@ -583,13 +591,6 @@ a
 
 # a / b + patchwork::plot_layout(heights = c(8, 1))
 ```
-
-
-## Representation by distict
-```{r, heat map of districts single year}
-#Heat Map
-```
-
 
 ```{r summarize function}
 # <!-- ## Define weighted function for repeated use to adjust for the size of denominators -->
@@ -639,7 +640,11 @@ plot_xy <- function(df) {
 }
 ```
 
-## School district comparison
+# School district comparison
+
+## Unequal representation by district
+
+Each distict has a substantial gap to address
 
 ```{r, results by school district}
 #district level results
@@ -670,7 +675,394 @@ results_total %>%
        x = "academic year")  
 ```
 
-## Comparison by school type & grade
+
+<!--
+## Highlight Table
+```{r, highlight table of districts single year}
+#| echo: false
+#| results: "hide"
+#| warning: false
+#| 
+select_year <- rr_n %>% select(academicyear) %>% unique() %>% 
+  filter(academicyear == max(academicyear)) %>% pull()
+
+#arrange levels of subgroup by overall order from most recent year, region wide
+subgroup_l <- rr_viz %>% 
+  filter(academicyear == max(academicyear),
+         category=="") %>% 
+  arrange((ratio)) %>% 
+  pull(subgroup)
+
+district_l <- rr_n %>% select(district) %>% unique() %>% 
+  pull()
+
+highlight_table_plot <- rr_n %>% 
+  filter(academicyear==select_year,
+         category=="",
+         !str_detect(district, "Charter"),
+         ) %>% 
+  mutate(subgroup=factor(subgroup, levels = subgroup_l),
+         district=factor(district, levels = district_l),
+         ) %>% 
+ggplot(aes(x=district, y=subgroup)) +
+    geom_point(aes(color = ratio), 
+               size=13, 
+               shape = "square") +
+  geom_text(aes(label=round(ratio,0))) +
+  scale_color_gradient(
+    # low = scooter,
+    # mid = grey30k,
+    low = grey30k,
+    high = burnt_sienna, 
+    na.value = "white",
+    # midpoint = 18,
+    # breaks = c(-1, 0, 250) ,
+  ) +
+  si_style_nolines() +
+  scale_x_discrete(position = "top",
+                   labels = function(district) str_wrap(district, width = 10)
+                   ) +
+  theme(axis.title = element_blank(),
+        axis.text.x.top = element_text(size=13),
+        axis.text.y = element_text(size=12),
+        legend.position = "bottom", 
+        legend.key.width = unit(2, "cm"),
+        )
+
+```
+-->
+
+
+## Underrepresentation varies by district
+
+Although some districts show encouraging signs
+
+```{r, highlight_table_table}
+#create labels for totals and subtotals
+totals <- rr_n %>% select(category) %>% 
+  unique() %>% 
+  arrange(desc(category)) %>% 
+  filter(category!="") %>% 
+  pull()
+
+# add to existing labels to organizae factor
+subroup_total_l <- c(totals, subgroup_l)
+
+#prepare data for highlight table, part 1
+rr_highlight_district <- rr_n %>% 
+  filter(academicyear==select_year,
+         # category %in% c("Total"),
+         !str_detect(district, "Charter"),
+         ) %>% 
+  mutate(
+         subgroup=factor(if_else(category=="", subgroup, category), 
+                         levels = subroup_total_l),
+         district=factor(district, levels = district_l),
+         ) %>% 
+  select(-school:-Teachers, -area, -rank) %>% 
+  rename(Subgroup = subgroup,
+         # `Ratio (n : 1)` = ratio
+         ) 
+
+#find total range to join in part 2 and include in color function
+total_by_district <- rr_highlight_district %>% filter(category == "Total") %>% 
+  mutate(total_ratio = round(ratio,0)) %>% 
+    select(district, total_ratio)
+
+
+
+#obtain ranges from totals to  peak value
+ratio_range <- rr_highlight_district %>% 
+  #pre-round
+  mutate(ratio = round(ratio, 0)) %>% 
+  # inner join with totals for next filter
+  inner_join(total_by_district) %>% 
+  filter(
+    ratio > total_ratio, # keep ratio above the total
+    is.finite(ratio) # keep finite ratios
+    ) %>% 
+  pull(ratio) %>% 
+  range(na.rm = TRUE) 
+
+#build color function
+highlight_fn <- function(x) {
+  case_when(x < 10 & x <= min(ratio_range) ~ grey10k, #darker grey when <10 & <min
+            x <= min(ratio_range) ~ "white", #lighter grey when close to total
+            x == Inf ~ burnt_sienna, #infinite values are coded at max
+            .default = #otherwise apply total:max across this range
+              scales::col_numeric(
+              palette = c("#ffd4ac", burnt_sienna),
+              domain = ratio_range
+  )(pmin(x, max(ratio_range)))
+  )
+}
+
+#build table
+rr_highlight_district %>% 
+  ##final munging
+  mutate(ratio = round(ratio, 0)) %>% 
+  pivot_wider(names_from = district, values_from = ratio) %>% 
+  arrange(desc(Subgroup)) %>% 
+  
+  #gt to build table
+  gt() %>% 
+  cols_hide(columns = c("academicyear", "category")) %>% 
+  #format all cells as bigger
+  tab_style(
+    style = cell_text(size = px(20)), 
+    locations = cells_body(rows = everything())
+    ) %>% 
+  #format all column headers as bigger
+  tab_style(
+    style = cell_text(size = px(20)), 
+    locations = cells_column_labels()
+    ) %>% 
+  #round columns
+  fmt_number(columns = 4:11, #comma format for counts
+             decimals = 0,
+             use_seps = TRUE) %>% 
+  
+  #make a highlight table
+  data_color(columns = 4:11, #apply to 
+             rows = Subgroup != "Total",
+             # rows = category != "Total", #apply to rows without totals
+             colors = highlight_fn)  %>%
+  
+  # #adjust 1 b0x only
+  # data_color(
+  #   columns = "South Seattle Schools",
+  #   rows = Subgroup == "Native American",
+  #   colors = scales::col_factor(
+  #     palette = burnt_sienna_light,
+  #     domain = NULL
+  #   )
+  # ) %>% 
+  
+  #format subtotal in bold
+  tab_style(
+    style = cell_text(size = px(20), color = grey60k),
+    locations = cells_body(
+      rows = category == "Subtotal: POC"
+    ) 
+  ) %>% 
+  #format total in bold
+  tab_style(
+    style = cell_text(size = px(20), weight = "bold"),
+    locations = cells_body(
+      rows = category == "Total"
+    ) 
+  ) %>% 
+  #left align first column
+  cols_align(align = "left",
+             columns = c(Subgroup)) %>% 
+  #add title
+  tab_header(title = glue::glue("Ratio of students to teachers (n : 1) by district during {max(unique(breakdown_n$academicyear))}")) %>%
+  tab_style(
+    style = list(
+      cell_text(size = 24, weight = "bold", align = "left")
+    ),
+    locations = cells_title(groups = "title")
+  )
+
+  
+  
+```
+
+## Deep Dive on South Seattle
+```{r bump chart of rank and ratio South Seattle}
+# Bump chart
+## iterate to create for all districts, region
+
+select_district_deep <- rr_n %>% select(district) %>% unique() %>% 
+  filter(district == district[7]) %>% pull()
+
+ratio_district_deep <- rr_n %>% 
+  filter(category == "Total",
+         district==select_district_deep) 
+
+#get beginning value
+ratio_district_b_deep <- ratio_district_deep %>% 
+      filter(academicyear == min(academicyear)) %>% 
+  pull(ratio) %>% 
+  round()
+
+# get end value
+ratio_district_e_deep <- ratio_district_deep %>% 
+      filter(academicyear == max(academicyear)) %>% pull(ratio) %>% round()
+
+rr_viz_deep <- rr_n %>%
+  filter(district==select_district_deep,
+    # academicyear == max(academicyear)
+    ) %>% 
+  mutate(lratio = case_when(academicyear == max(academicyear) |
+                              academicyear == min(academicyear) ~ ratio),
+         lsubgroup = case_when(academicyear == max(academicyear) ~ 
+                                    subgroup)) 
+
+rr_viz_deep %>% 
+  filter(category == "") %>% 
+ggplot(aes(x=academicyear, y=rank)) +
+  geom_line(aes(linewidth = Students, color = subgroup)) +
+  geom_point(size=9, aes(color=subgroup)) +
+  #label ratio above top and bottom points
+  geom_text(aes(label = round(lratio)), color=grey10k) +
+  #label each lineby subgroup
+  geom_text(aes(label = lsubgroup,
+                color = subgroup), 
+            fontface = "bold",
+            nudge_x = 1.3) +
+  #expand x-axis for labels
+  scale_x_continuous(
+    limits = c(min(rr_n$academicyear), max(rr_n$academicyear) + 2),
+    breaks = seq(from = min(rr_n$academicyear), by = 1, length.out = 7)
+  ) +
+  scale_y_reverse(breaks = 1:7) +
+  #assign colors by subgroup
+  scale_color_manual(values = c(
+  "Pacific Islander"  = "#E69F00",
+  "Latinx" = "#56B4E9",
+  "Black/African American" = "#009E73",
+  "Native American" = "#9467BD",
+  "Asian" = "#0072B2",
+  "Multiracial" =  "#A2A475",
+  "White" = grey30k
+  ))+
+  si_style_nolines() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        plot.title = element_markdown(),
+        plot.subtitle = element_markdown(),
+        plot.caption.position = "plot",
+        plot.caption = element_markdown(hjust = 0.32,
+                                    margin = margin(t=20))) +
+  labs(title = glue::glue("Ratio of students per teacher by racial/ethnic group in {unique(rr_viz_deep$district)}"),
+       subtitle = "Order shows rank (most underrepresented to least, top to bottom). Values within circles show ratio of students to teachers.<br>Width of lines reflect number of students (thicker lines indicate higher numbers).",
+       caption = glue::glue("**{ratio_district_b_deep} : 1** ({year_b}) *student to teacher ratio*, irrespective of race/ethnicity   **{ratio_district_e_deep} : 1** ({year_e})"),
+       y= "Rank (most to least represented)")
+
+
+
+
+# 
+# b <- rr_viz %>% 
+#   filter(category == "Total") %>% 
+#     mutate(lsubgroup = case_when(academicyear==max(academicyear) ~ str_wrap("Reference Ratio: Students per Teacher", width = 20))) %>% 
+#   
+# ggplot(aes(x=academicyear, y=subgroup)) +
+#   # geom_point(shape = "square", color = grey20k, size=8) +
+#   # label points
+#   geom_text(aes(label = round(ratio, 0)), colour = grey50k) + 
+#   #label series
+#   geom_text(aes(label = lsubgroup),
+#             nudge_x = 1.3,
+#             color = grey50k
+#             ) +
+#  #expand x-axis for labels
+#   scale_x_continuous(
+#     limits = c(min(rr_n$academicyear), max(rr_n$academicyear) + 2),
+#     breaks = seq(from = min(rr_n$academicyear), by = 1, length.out = 7)
+#   ) +
+#   # scale_y_discrete(position = "right") +
+#   
+#   si_style_nolines() +
+#   theme(axis.title = element_blank(),
+#         axis.text = element_blank())
+
+# a / b + patchwork::plot_layout(heights = c(8, 1))
+```
+
+<!--
+```{r}
+rr_n %>% 
+  filter(district==select_district_deep,
+         category=="",
+         !str_detect(district, "Charter"),
+         ) %>% 
+  mutate(subgroup=factor(subgroup, levels = subgroup_l),
+         district=factor(district, levels = district_l),
+         ) %>% 
+ggplot(aes(x=academicyear, y=subgroup)) +
+    geom_point(aes(color = ratio, size=Students), 
+               shape = "square") +
+  geom_text(aes(label=round(ratio,0))) +
+  scale_color_gradient(
+    # low = scooter,
+    # mid = grey30k,
+    low = grey30k,
+    high = burnt_sienna, 
+    na.value = "white",
+    # midpoint = 18,
+    # breaks = c(-1, 0, 250) ,
+  ) +
+  si_style_nolines() +
+  scale_x_discrete(position = "top",
+                   labels = function(district) str_wrap(district, width = 10)
+                   ) +
+  theme(axis.title = element_blank(),
+        axis.text.x.top = element_text(size=13),
+        axis.text.y = element_text(size=12),
+        legend.position = "bottom", 
+        legend.key.width = unit(2, "cm"),
+        )
+```
+
+
+## another look
+```{r}
+
+rr_viz_deep %>% 
+  select(academicyear, subgroup, district, category, ratio) %>% 
+  rename(Subgroup=subgroup) %>% 
+  pivot_wider(names_from = academicyear, values_from = ratio) %>% 
+  gt() %>% 
+  fmt_number(columns = 4:10, decimals = 0) %>% 
+  cols_hide(columns = c(district, category)) %>% 
+  tab_style(
+    style = cell_text(size = px(20)), 
+    locations = cells_body(rows = everything())
+    ) %>% 
+  #format all column headers as bigger
+  tab_style(
+    style = cell_text(size = px(20)), 
+    locations = cells_column_labels()
+    ) %>% 
+  #make a highlight table
+  data_color(columns = 4:10, #apply to 
+             rows = Subgroup != "Total",
+             # rows = category != "Total", #apply to rows without totals
+             colors = highlight_fn) %>% 
+  #format subtotal in bold
+  tab_style(
+    style = cell_text(size = px(20), color = grey60k),
+    locations = cells_body(
+      rows = category == "Subtotal: POC"
+    ) 
+  ) %>% 
+  #format total in bold
+  tab_style(
+    style = cell_text(size = px(20), weight = "bold"),
+    locations = cells_body(
+      rows = category == "Total"
+    ) 
+  ) %>% 
+  #left align first column
+  cols_align(align = "left",
+             columns = c(Subgroup)) %>% 
+  #add title
+  tab_header(title = glue::glue("Ratio of students to teachers (n : 1) by year in {select_district_deep}")) %>%
+  tab_style(
+    style = list(
+      cell_text(size = 24, weight = "bold", align = "left")
+    ),
+    locations = cells_title(groups = "title")
+  )
+```
+-->
+
+# Comparison by school type & grade
+
+## Challenges across school types/grades
 
 ```{r, compare percentage by school type and grade}
 
@@ -725,7 +1117,7 @@ results_schools %>%
        caption ="alternative configurations include \"K-12\" or \"middle + high school\" among others")
 ```
 
-## Comparison by school grade
+## Disparities by school grade
 
 ```{r}
 results_schools %>% 
@@ -780,7 +1172,7 @@ results_schools %>%
        caption ="alternative configurations include \"K-12\" or \"middle + high school\" among others")
 ```
 
-
+# School-level analysis
 
 ```{r, define custom table format}
 #| echo: false
