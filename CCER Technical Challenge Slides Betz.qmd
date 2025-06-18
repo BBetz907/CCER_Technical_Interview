@@ -644,7 +644,7 @@ plot_xy <- function(df) {
 
 ## Unequal representation by district
 
-Each distict has a substantial gap to address
+Each district has a substantial gap to address
 
 ```{r, results by school district}
 #district level results
@@ -734,8 +734,6 @@ ggplot(aes(x=district, y=subgroup)) +
 
 
 ## Underrepresentation varies by district
-
-Although some districts show encouraging signs
 
 ```{r, highlight_table_table}
 #create labels for totals and subtotals

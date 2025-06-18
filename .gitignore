@@ -33,7 +33,6 @@
 *.dbf
 
 #no html output or R project
-*.html
 *.Rproj
 
 #nothing from these folders
